@@ -317,10 +317,36 @@ select.field option, select.field optgroup { background: var(--color-espresso); 
     .rg-band-cell:nth-child(n + 3) { border-top: 1px solid rgb(226 171 152 / 0.25); } /* taste-skill-ignore: separador */
   }
 
+  /* Indicador «Desliza» al pie de la portada: un ratón en oro rosa con la ruedita bajando. */
+  .scroll-cue {
+    width: 26px;
+    height: 44px;
+    border-radius: 999px;
+    display: flex;
+    justify-content: center;
+    padding-top: 8px;
+    box-shadow: inset 0 0 0 1.5px rgb(226 171 152 / 0.85), 0 0 14px rgb(226 171 152 / 0.3); /* taste-skill-ignore: indicador pedido por el cliente */
+  }
+  .scroll-cue-dot {
+    width: 4px;
+    height: 9px;
+    border-radius: 4px;
+    background: #e2ab98;
+    box-shadow: 0 0 8px rgb(226 171 152 / 0.8); /* taste-skill-ignore: indicador pedido por el cliente */
+    animation: scroll-cue 2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  @keyframes scroll-cue {
+    0% { transform: translateY(0); opacity: 0; }
+    15% { opacity: 1; }
+    65% { transform: translateY(14px); opacity: 1; }
+    100% { transform: translateY(18px); opacity: 0; }
+  }
+
 }
 
 @media (prefers-reduced-motion: reduce) {
   .rose-gold { animation: none; }
+  .scroll-cue-dot { animation: none; }
 }
 
 /* Reserva por pasos, con el estilo de la carta. */

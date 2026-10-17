@@ -38,7 +38,7 @@ export const EXTRAS = [
   { id: 'ojo-gato', name: 'Ojo de gato o cromado', minutes: 10, price: 5, desc: 'Brillo magnético o efecto espejo.' },
   { id: 'mano-alzada', name: 'Diseño a mano alzada', minutes: 20, price: 8, desc: 'Lunares, estrellas, animal print, hasta cuatro uñas.' },
   { id: 'relieve', name: 'Flores 3D y bolitas doradas', minutes: 30, price: 12, desc: 'Relieve, conchas y pedrería.' },
-  { id: 'autor', name: 'Diseño de autora completo', minutes: 45, price: 18, desc: 'Cada uña distinta, como en el Nail Diary.' },
+  { id: 'autor', name: 'Diseño personalizado completo', minutes: 45, price: 18, desc: 'Cada uña distinta, como en el Nail Diary.' },
 ]
 
 export const REMOVAL = { minutes: 15, price: 8 }

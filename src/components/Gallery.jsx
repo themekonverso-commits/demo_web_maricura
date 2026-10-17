@@ -5,7 +5,7 @@ import { findExtra, findService, formatMinutes, formatPrice } from '../data/serv
 import { Item, Stagger } from './Reveal'
 
 const N = GALLERY.length
-const START = 2
+const START = 0
 const BASE = findService('semi')
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 
