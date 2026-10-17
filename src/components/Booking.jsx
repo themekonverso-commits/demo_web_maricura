@@ -594,7 +594,7 @@ const EMPTY_FORM = { name: '', cc: '+34', phone: '', email: '', note: '', privac
 export default function Booking({ prefill }) {
   const reduce = useReducedMotion()
   const sectionRef = useRef(null)
-  const firstRender = useRef(true)
+  const lastStep = useRef(null)
   const [bookings, setBookings] = useState(loadBookings)
   const [view, setView] = useState('flow') // flow | done | manage
   const [step, setStep] = useState(0)
@@ -639,11 +639,14 @@ export default function Booking({ prefill }) {
   }, [prefill])
 
   // Al cambiar de paso o de vista, la sección vuelve arriba para que se vea el comienzo (clave en celular).
+  // Se compara con el paso anterior (y no con «primer render») para que el modo estricto de React,
+  // que ejecuta los efectos dos veces al montar, no baje la página hasta aquí al cargar.
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false
-      return
-    }
+    const key = `${step}|${view}|${reschedule}`
+    if (lastStep.current === key) return
+    const first = lastStep.current === null
+    lastStep.current = key
+    if (first) return
     sectionRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
   }, [step, view, reschedule])
 

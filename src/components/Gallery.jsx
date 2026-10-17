@@ -201,6 +201,39 @@ export default function Gallery({ onWantDesign }) {
 
   useMotionValueEvent(progress, 'change', (p) => setActive(mod(Math.round(p), N)))
 
+  // Aviso de primera vez: al llegar al carrusel, la tarjeta del centro se voltea sola y vuelve a la foto,
+  // para que se entienda que se puede tocar. Una sola vez por visita; si la persona toca algo antes, no sale.
+  const hinted = useRef(false)
+  const hintTimers = useRef([])
+  const stopHint = () => {
+    hinted.current = true
+    hintTimers.current.forEach(clearTimeout)
+    hintTimers.current = []
+  }
+  useEffect(() => {
+    if (reduce) return
+    const el = stageRef.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting || hinted.current) return
+        hinted.current = true
+        io.disconnect()
+        const card = mod(Math.round(progress.get()), N)
+        hintTimers.current = [
+          setTimeout(() => setFlipped(card), 400),
+          setTimeout(() => setFlipped((f) => (f === card ? null : f)), 400 + 2000),
+        ]
+      },
+      { threshold: 0.6 },
+    )
+    io.observe(el)
+    return () => {
+      io.disconnect()
+      hintTimers.current.forEach(clearTimeout)
+    }
+  }, [reduce, progress])
+
   const goTo = useCallback(
     (i, velocity = 0) => {
       anim.current?.stop()
@@ -214,6 +247,7 @@ export default function Gallery({ onWantDesign }) {
   )
 
   const step = (d) => {
+    stopHint()
     setFlipped(null)
     goTo(Math.round(progress.get()) + d)
   }
@@ -249,6 +283,7 @@ export default function Gallery({ onWantDesign }) {
             className="relative mx-auto outline-offset-4 select-none"
             style={{ height: W * (mobile ? 1.62 : 1.5) + 24, perspective: mobile ? 900 : 1400, touchAction: 'pan-y' }}
             onPointerDownCapture={() => {
+              stopHint()
               dragged.current = false
               anim.current?.stop()
               panStart.current = progress.get()

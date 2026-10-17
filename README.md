@@ -51,4 +51,4 @@ Para la versión real falta: un servidor o agenda donde se guarden las citas (ho
 
 Las 8 fotos de trabajos de `public/galeria/` son de su Instagram. El retrato (`andreina-retrato.jpg`) lo pasó el cliente y está recortado en cuadrado 1:1. Las fotos que ya no se usan están en `descartadas/` (no se suben al repositorio).
 
-**Foto de portada (`public/decor/hero-tortuga.jpg`): no es de Andreina.** Es de @nail_inspo_daily (lleva su marca de agua) y se usa solo como referencia en la demo, con su crédito visible en el pie de página. Antes de publicar el sitio hay que cambiarla por una foto propia de Andreina. El sitio lleva `noindex` en `index.html` para que los buscadores no lo muestren mientras sea demo; hay que quitarlo al publicar.
+**Foto de portada (`public/decor/hero-tortuga.jpg`): no es de Andreina.** Es de @nail_inspo_daily (lleva su marca de agua) y se usa solo como referencia en la demo (el crédito del pie de página se quitó a pedido). Antes de publicar el sitio hay que cambiarla por una foto propia de Andreina. El sitio lleva `noindex` en `index.html` para que los buscadores no lo muestren mientras sea demo; hay que quitarlo al publicar.

@@ -56,10 +56,6 @@ export default function Footer() {
             YUYENAILS
           </text>
         </motion.svg>
-        <p className="mt-5 text-small text-cream/70">
-          Sitio de demostración para {BUSINESS.owner}. Fotos de los trabajos: {BUSINESS.handle}. Foto de portada de
-          referencia: @nail_inspo_daily. Precios orientativos.
-        </p>
       </div>
     </footer>
   )

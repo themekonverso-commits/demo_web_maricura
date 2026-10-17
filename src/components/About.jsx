@@ -18,7 +18,7 @@ export default function About() {
               loading="lazy"
               className="photo rounded-none size-full object-cover"
             />
-            <figcaption className="glass absolute left-3 bottom-3 rounded-full px-4 py-2 text-small text-cream">
+            <figcaption className="glass absolute left-1/2 -translate-x-1/2 bottom-3 whitespace-nowrap rounded-full px-4 py-2 text-small text-cream">
               Andreina Soto · nail artist
             </figcaption>
           </figure>
@@ -33,22 +33,6 @@ export default function About() {
             Formada y certificada, comparte cada trabajo en su{' '}
             <a href={BUSINESS.instagram} className="link text-rg" target="_blank" rel="noreferrer">Nail Diary</a>. En su mesa hay
             sitio para una sola clienta: el tiempo que pide el diseño es tuyo.
-          </Item>
-          <Item as="ul" className="mt-10 grid grid-cols-3 gap-4 text-small text-left">
-            <li>
-              <span className="block text-cream">Sevilla</span>
-              <span className="text-cream/65">venezolana en España</span>
-            </li>
-            <li>
-              <span className="block text-cream">Con cita</span>
-              <span className="text-cream/65">una clienta cada vez</span>
-            </li>
-            <li>
-              <a href={BUSINESS.instagram} className="link inline-block text-rg break-all py-2.5 md:py-0" target="_blank" rel="noreferrer">
-                {BUSINESS.handle}
-              </a>
-              <span className="block text-cream/65">su Nail Diary</span>
-            </li>
           </Item>
         </div>
       </Stagger>
