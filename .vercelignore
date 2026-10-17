@@ -1,0 +1,17 @@
+# Dependencias y compilación (se regeneran con npm install / npm run build)
+node_modules/
+dist/
+
+# Capturas y reportes del inspector de diseño
+.taste-skill/
+
+# Fotos que el sitio ya no usa
+descartadas/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
+
+.vercel
+.env*
