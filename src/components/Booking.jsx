@@ -1,32 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { BUSINESS, SCHEDULE, whatsappLink } from '../config'
-import { EXTRAS, REMOVAL, SERVICE_GROUPS, formatMinutes, formatPrice } from '../data/services'
+import { BUSINESS, RESERVAS, whatsappLink } from '../config'
+import { formatMinutes, formatPrice } from '../data/services'
+import { useCatalog } from '../lib/catalog'
 import {
-  availableTimes,
-  changeDeadline,
-  currentId,
+  cancelBooking,
+  createBooking,
+  getAvailability,
+  getDays,
+  getManageAvailability,
+  getManageDays,
+  getManaged,
+  rescheduleBooking,
+} from '../lib/api'
+import {
+  addDays,
   dateKey,
+  forgetToken,
   formatLongDate,
   formatShortDate,
-  loadBookings,
+  fromApi,
   minutesToTime,
-  newId,
   parseKey,
-  rememberCurrent,
-  saveBooking,
-  startsAt,
-  updateBooking,
+  rememberToken,
+  savedToken,
+  takeTokenFromUrl,
+  timeToMinutes,
 } from '../lib/booking'
 
-// ---------- Catálogo para reservar: la carta + extras que se suman ----------
-const EXTRA_ITEMS = [
-  ...EXTRAS.filter((e) => e.id !== 'ninguno').map((e) => ({ ...e, extra: true })),
-  { id: 'retirada', name: 'Retirada de otro salón', minutes: REMOVAL.minutes, price: REMOVAL.price, desc: 'Gel, acrílico o semipermanente.', extra: true },
-]
-const GROUPS = [...SERVICE_GROUPS, { id: 'extras', name: 'Extras', note: 'Se suman a un servicio de manos o pies.', items: EXTRA_ITEMS }]
-const BY_ID = Object.fromEntries(GROUPS.flatMap((g) => g.items).map((s) => [s.id, s]))
+// ---------- Catálogo para reservar: la carta del panel + extras que se suman ----------
+function bookingCatalog(catalog) {
+  const groups = [
+    ...catalog.groups,
+    { id: 'extras', name: 'Extras', note: 'Se suman a un servicio de manos o pies.', items: catalog.extraItems.map((e) => ({ ...e, extra: true })) },
+  ]
+  return { groups, byId: Object.fromEntries(groups.flatMap((g) => g.items).map((s) => [s.id, s])) }
+}
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
+const MAX_RANGE = 62 // días que devuelve /days de una vez
 
 const STEPS = ['Servicios', 'Día y hora', 'Tus datos']
 const COUNTRIES = [
@@ -50,7 +62,7 @@ const EASE = [0.23, 1, 0.32, 1]
 const range = (b) => `${minutesToTime(b.start)}–${minutesToTime(b.start + b.minutes)}`
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
 const deadlineText = (b) => {
-  const d = changeDeadline(b)
+  const d = b.deadline
   return `${formatShortDate(dateKey(d))} a las ${minutesToTime(d.getHours() * 60 + d.getMinutes())}`
 }
 
@@ -94,6 +106,54 @@ function Checkbox({ checked }) {
       {checked && <Icon d={ICON.check} size={15} />}
     </span>
   )
+}
+
+// Antibots de Cloudflare (Turnstile), con la clave pública que da la API del sistema de reservas.
+let turnstileScript = null
+function loadTurnstile() {
+  turnstileScript ??= new Promise((resolve, reject) => {
+    if (window.turnstile) return resolve(window.turnstile)
+    const el = document.createElement('script')
+    el.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    el.async = true
+    el.onload = () => resolve(window.turnstile)
+    el.onerror = () => {
+      turnstileScript = null
+      reject(new Error('turnstile'))
+    }
+    document.head.appendChild(el)
+  })
+  return turnstileScript
+}
+
+function Turnstile({ siteKey, onToken, resetKey }) {
+  const box = useRef(null)
+  const cb = useRef(onToken)
+  cb.current = onToken
+  useEffect(() => {
+    let id
+    let on = true
+    cb.current(null)
+    loadTurnstile()
+      .then((ts) => {
+        if (!on || !box.current) return
+        id = ts.render(box.current, {
+          sitekey: siteKey,
+          theme: 'dark',
+          size: 'flexible',
+          language: 'es',
+          callback: (t) => cb.current(t),
+          'expired-callback': () => cb.current(null),
+          'error-callback': () => cb.current(null),
+        })
+      })
+      .catch(() => cb.current(null))
+    return () => {
+      on = false
+      if (id !== undefined) window.turnstile?.remove(id)
+    }
+  }, [siteKey, resetKey])
+  return <div ref={box} className="min-h-[65px]" />
 }
 
 // Paso en el que estoy, como en la referencia: los hechos llevan ✓ y se puede volver a ellos.
@@ -167,13 +227,13 @@ function BottomBar({ note, title, sub, action, actionProps }) {
 
 // ---------- Paso 1: servicios ----------
 
-function ServicesStep({ selected, toggle, error }) {
-  const hasMain = selected.some((id) => !BY_ID[id].extra)
+function ServicesStep({ groups, byId, selected, toggle, error }) {
+  const hasMain = selected.some((id) => !byId[id]?.extra)
   return (
     <div>
       <h3 className="font-caps rose-gold text-[clamp(2rem,1.4rem+2.2vw,3rem)] leading-tight">¿Qué te hacemos?</h3>
       <p className="mt-1 text-cream/75">Puedes elegir varios servicios.</p>
-      {GROUPS.map((g) => (
+      {groups.map((g) => (
         <div key={g.id} className="mt-8">
           <h4 className="font-caps text-rg uppercase tracking-[0.12em] text-[0.95rem]">{g.name}</h4>
           {g.note && <p className="text-small text-cream/60 mt-0.5">{g.note}</p>}
@@ -215,12 +275,12 @@ function ServicesStep({ selected, toggle, error }) {
 
 // ---------- Paso 2: día y hora ----------
 
-function Calendar({ month, setMonth, date, onPick, freeCount }) {
+function Calendar({ month, setMonth, date, onPick, freeCount, maxDays }) {
   const today = new Date()
   const first = new Date(month.getFullYear(), month.getMonth(), 1)
   const offset = (first.getDay() + 6) % 7
   const daysIn = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
-  const last = new Date(today.getFullYear(), today.getMonth(), today.getDate() + SCHEDULE.daysAhead)
+  const last = new Date(today.getFullYear(), today.getMonth(), today.getDate() + maxDays)
   const canPrev = first > new Date(today.getFullYear(), today.getMonth(), 1)
   const canNext = new Date(month.getFullYear(), month.getMonth() + 1, 1) <= last
   const cells = [...Array(offset).fill(null), ...Array.from({ length: daysIn }, (_, i) => new Date(month.getFullYear(), month.getMonth(), i + 1))]
@@ -304,7 +364,7 @@ function TimeGroup({ label, times, start, setStart, reduce }) {
   )
 }
 
-function DayStep({ items, minutes, date, setDate, start, setStart, month, setMonth, freeCount, timesFor, onChangeServices, reduce, rescheduling }) {
+function DayStep({ items, minutes, date, setDate, start, setStart, month, setMonth, freeCount, timesFor, onChangeServices, reduce, rescheduling, maxDays, loading, error, notice }) {
   const times = date ? timesFor(date) : []
   const morning = times.filter((t) => t < MIDDAY)
   const afternoon = times.filter((t) => t >= MIDDAY)
@@ -315,22 +375,30 @@ function DayStep({ items, minutes, date, setDate, start, setStart, month, setMon
       <h3 className="mt-8 font-caps rose-gold text-[clamp(2rem,1.4rem+2.2vw,3rem)] leading-tight">
         {rescheduling ? 'Elige el nuevo día' : '¿Qué día te viene bien?'}
       </h3>
+      {notice && (
+        <p className="mt-2 text-accent" role="alert">
+          {notice}
+        </p>
+      )}
       <div className="mt-5 grid lg:grid-cols-2 gap-4 md:gap-6 items-start">
         <Calendar
           month={month}
           setMonth={setMonth}
           date={date}
           freeCount={freeCount}
+          maxDays={maxDays}
           onPick={(k) => {
             setDate(k)
             setStart(null)
           }}
         />
         <div className="menu-card p-4 md:p-6" aria-live="polite">
-          {date ? (
+          {error ? (
+            <p className="text-accent">{error}</p>
+          ) : date ? (
             <>
               <p className="text-lead">{formatLongDate(date)}</p>
-              <p className="text-small text-cream/65 mt-0.5">{hint}</p>
+              <p className="text-small text-cream/65 mt-0.5">{loading ? 'Buscando horas libres…' : times.length ? hint : 'Ya no quedan horas libres este día.'}</p>
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div key={date} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
                   <TimeGroup label="Mañana" times={morning} start={start} setStart={setStart} reduce={reduce} />
@@ -339,7 +407,7 @@ function DayStep({ items, minutes, date, setDate, start, setStart, month, setMon
               </AnimatePresence>
             </>
           ) : (
-            <p className="text-cream/70">Elige un día en el calendario para ver las horas libres.</p>
+            <p className="text-cream/70">{loading ? 'Buscando horas libres…' : 'Elige un día en el calendario para ver las horas libres.'}</p>
           )}
         </div>
       </div>
@@ -362,7 +430,7 @@ function Field({ label, optional, error, hint, children }) {
   )
 }
 
-function DataStep({ items, minutes, date, start, form, setForm, errors, onChangeServices }) {
+function DataStep({ items, minutes, date, start, form, setForm, errors, onChangeServices, siteKey, onCaptcha, captchaKey }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }))
   return (
     <div>
@@ -413,6 +481,19 @@ function DataStep({ items, minutes, date, start, form, setForm, errors, onChange
             <span className="text-cream/60">Opcional; puedes darte de baja cuando quieras.</span>
           </span>
         </label>
+        {siteKey && (
+          <div className="md:col-span-2">
+            <Turnstile siteKey={siteKey} onToken={onCaptcha} resetKey={captchaKey} />
+            {errors.captcha && <span className="block mt-1.5 text-small text-accent">{errors.captcha}</span>}
+          </div>
+        )}
+        {errors.form && (
+          <p className="md:col-span-2 text-accent" role="alert">
+            {errors.form}
+          </p>
+        )}
+        {/* Campo trampa para robots: fuera de la pantalla, las personas no lo ven ni llegan con el tabulador. */}
+        <input type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="fixed -left-[9999px] top-0 size-px opacity-0" value={form.website} onChange={set('website')} />
       </form>
     </div>
   )
@@ -434,6 +515,7 @@ function DetailRows({ rows }) {
 }
 
 function Done({ booking, onManage, reduce }) {
+  // Teléfono y nota los acaba de escribir la clienta: la API no los devuelve (no salen del sistema).
   const message = [
     `Hola ${BUSINESS.owner.split(' ')[0]}, acabo de reservar en ${BUSINESS.name}:`,
     `• ${booking.services.join(' + ')}`,
@@ -441,7 +523,7 @@ function Done({ booking, onManage, reduce }) {
     `• Total: ${formatPrice(booking.price)}`,
     `• A nombre de: ${booking.name} (${booking.phone})`,
     booking.note ? `• Nota: ${booking.note}` : null,
-    `Código de la cita: ${booking.id}`,
+    `Código de la cita: ${booking.code}`,
   ]
     .filter(Boolean)
     .join('\n')
@@ -455,7 +537,7 @@ function Done({ booking, onManage, reduce }) {
       >
         <Icon d={ICON.check} size={34} />
       </motion.span>
-      <h3 className="mt-5 font-caps rose-gold text-[clamp(2.2rem,1.6rem+2.4vw,3.2rem)] leading-tight">¡Cita reservada!</h3>
+      <h3 className="mt-5 font-caps rose-gold text-[clamp(2.2rem,1.6rem+2.4vw,3.2rem)] leading-tight">{booking.status === 'pending' ? '¡Solicitud enviada!' : '¡Cita reservada!'}</h3>
       <p className="mt-1 text-lead text-cream/80">Te espero, {booking.name.split(' ')[0]}.</p>
       <div className="mt-7 text-left">
         <DetailRows
@@ -477,7 +559,8 @@ function Done({ booking, onManage, reduce }) {
         </a>
       </div>
       <p className="mt-5 text-small text-cream/60">
-        Puedes cambiar o cancelar hasta {SCHEDULE.changeHours} horas antes. Esta demo guarda la cita solo en este navegador.
+        {booking.status === 'pending' ? 'Andreina te confirmará la cita en cuanto la revise. ' : ''}
+        Te hemos enviado la confirmación por email. Puedes cambiar o cancelar hasta {booking.cutoffHours} horas antes.
       </p>
     </div>
   )
@@ -485,6 +568,18 @@ function Done({ booking, onManage, reduce }) {
 
 function CancelDialog({ booking, onClose, onConfirm, reduce }) {
   const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await onConfirm(reason.trim())
+    } catch (e) {
+      setError(e.message)
+      setBusy(false)
+    }
+  }
   const ref = useRef(null)
   useEffect(() => {
     const prev = document.activeElement
@@ -521,12 +616,17 @@ function CancelDialog({ booking, onClose, onConfirm, reduce }) {
           </span>
           <textarea ref={ref} className="field min-h-24 resize-y" value={reason} onChange={(e) => setReason(e.target.value)} />
         </label>
+        {error && (
+          <p className="mt-4 text-accent" role="alert">
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex flex-wrap justify-end gap-3">
           <button type="button" className="btn glass text-cream" onClick={onClose}>
             No, volver
           </button>
-          <button type="button" className="btn bg-[#e98a7c] text-[#1c0f0b] px-7" onClick={() => onConfirm(reason.trim())}>
-            Sí, cancelar
+          <button type="button" className="btn bg-[#e98a7c] text-[#1c0f0b] px-7" disabled={busy} aria-busy={busy || undefined} onClick={confirm}>
+            {busy ? 'Cancelando…' : 'Sí, cancelar'}
           </button>
         </div>
       </motion.div>
@@ -534,13 +634,16 @@ function CancelDialog({ booking, onClose, onConfirm, reduce }) {
   )
 }
 
+const STATUS = { confirmed: 'Confirmada', pending: 'Pendiente de confirmar', completed: 'Hecha', no_show: 'No viniste', cancelled: 'Cancelada' }
+
 function Manage({ booking, onReschedule, onCancel, onNew }) {
   const cancelled = booking.status === 'cancelled'
-  const canChange = !cancelled && new Date() < changeDeadline(booking)
+  const active = booking.status === 'confirmed' || booking.status === 'pending'
+  const canChange = active && booking.canChange && (!booking.deadline || new Date() < booking.deadline)
   return (
     <div className="menu-card mx-auto max-w-[820px] px-5 py-7 md:px-9 md:py-9">
       <span className={`inline-block rounded-full px-4 py-1.5 text-small ${cancelled ? 'bg-[#e98a7c]/15 text-[#f0a296]' : 'bg-cream/[0.08] text-rg'}`}>
-        {cancelled ? 'Cancelada' : 'Confirmada'}
+        {STATUS[booking.status] ?? 'Confirmada'}
       </span>
       <h3 className={`mt-4 font-caps text-[clamp(1.8rem,1.2rem+2.2vw,2.8rem)] leading-tight ${cancelled ? 'text-cream/50 line-through' : 'rose-gold'}`}>
         {formatLongDate(booking.date)}, {minutesToTime(booking.start)}
@@ -555,13 +658,13 @@ function Manage({ booking, onReschedule, onCancel, onNew }) {
             ['Hora', range(booking)],
             ['Total', formatPrice(booking.price)],
             ['A nombre de', booking.name],
-            ['Código', booking.id],
+            ['Código', booking.code],
           ]}
         />
       </div>
-      {cancelled ? (
+      {!active ? (
         <div className="mt-7 text-center">
-          <p className="text-cream/75">Esta cita está cancelada. Cuando quieras, reserva otra.</p>
+          <p className="text-cream/75">{cancelled ? 'Esta cita está cancelada.' : 'Esta cita ya pasó.'} Cuando quieras, reserva otra.</p>
           <button type="button" className="btn glass glass-gold glass-refract mt-5" onClick={onNew}>
             Reservar otra cita
           </button>
@@ -578,8 +681,8 @@ function Manage({ booking, onReschedule, onCancel, onNew }) {
           </div>
           <p className="mt-4 text-center text-small text-cream/60">
             {canChange
-              ? `Puedes cambiarla o cancelarla hasta ${SCHEDULE.changeHours} horas antes: hasta el ${deadlineText(booking)}.`
-              : `Faltan menos de ${SCHEDULE.changeHours} horas: para cambiarla, escribe a Andreina por WhatsApp.`}
+              ? `Puedes cambiarla o cancelarla hasta ${booking.cutoffHours} horas antes${booking.deadline ? `: hasta el ${deadlineText(booking)}` : ''}.`
+              : `Faltan menos de ${booking.cutoffHours} horas: para cambiarla, escribe a Andreina por WhatsApp.`}
           </p>
         </>
       )}
@@ -589,13 +692,16 @@ function Manage({ booking, onReschedule, onCancel, onNew }) {
 
 // ---------- Sección completa ----------
 
-const EMPTY_FORM = { name: '', cc: '+34', phone: '', email: '', note: '', privacy: false, promo: false }
+const EMPTY_FORM = { name: '', cc: '+34', phone: '', email: '', note: '', privacy: false, promo: false, website: '' }
 
 export default function Booking({ prefill }) {
   const reduce = useReducedMotion()
   const sectionRef = useRef(null)
   const lastStep = useRef(null)
-  const [bookings, setBookings] = useState(loadBookings)
+  const catalog = useCatalog()
+  const { groups, byId } = useMemo(() => bookingCatalog(catalog), [catalog.groups, catalog.extraItems])
+  const maxDays = catalog.settings?.max_advance_days ?? 60
+  const cutoffHours = catalog.settings?.cancel_cutoff_hours ?? 24
   const [view, setView] = useState('flow') // flow | done | manage
   const [step, setStep] = useState(0)
   const [selected, setSelected] = useState([])
@@ -604,35 +710,116 @@ export default function Booking({ prefill }) {
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [form, setForm] = useState(EMPTY_FORM)
   const [errors, setErrors] = useState({})
-  const [currentBooking, setCurrentBooking] = useState(() => currentId())
-  const [reschedule, setReschedule] = useState(null) // id de la cita que se está cambiando
+  const [token, setToken] = useState(null) // enlace privado de la cita de esta clienta
+  const [booking, setBooking] = useState(null)
+  const [reschedule, setReschedule] = useState(false) // cambiando la cita guardada
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [notice, setNotice] = useState(null) // aviso encima del calendario (p. ej. «esa hora acaba de ocuparse»)
+  const [captcha, setCaptcha] = useState(null)
+  const [captchaKey, setCaptchaKey] = useState(0)
+  const idempotency = useRef(newKey())
 
-  const booking = bookings.find((b) => b.id === currentBooking) ?? null
-  const items = selected.map((id) => BY_ID[id])
+  const items = selected.map((id) => byId[id]).filter(Boolean)
   const minutes = reschedule ? booking?.minutes ?? 0 : items.reduce((a, s) => a + s.minutes, 0)
   const price = items.reduce((a, s) => a + s.price, 0)
   const hasMain = items.some((s) => !s.extra)
+  const serviceIds = items.map((s) => s.apiId).filter(Boolean)
+  // Profesional: «sin preferencia» si el negocio lo permite; si no, la primera que hace todos los servicios.
+  const staffId = catalog.settings?.allow_any_staff === false
+    ? catalog.staff.find((p) => serviceIds.every((id) => p.service_ids.includes(id)))?.id
+    : undefined
 
-  const now = useMemo(() => new Date(), [view, step])
-  const cache = useMemo(() => new Map(), [minutes, bookings, reschedule, now])
-  const timesFor = (key) => {
-    if (!cache.has(key)) cache.set(key, availableTimes(key, minutes, bookings, now, reschedule ?? undefined))
-    return cache.get(key)
+  // ---------- Horas libres: los días del calendario y las horas del día elegido, de la API ----------
+  const availKey = reschedule ? `r:${token}` : serviceIds.length && serviceIds.length === items.length ? `s:${serviceIds.join(',')}:${staffId ?? ''}` : null
+  const [days, setDays] = useState({ key: null, map: new Map(), loading: false, error: null })
+  const [slots, setSlots] = useState({}) // `${availKey}|${fecha}` → [{ min, start }]
+  const [slotsLoading, setSlotsLoading] = useState(false)
+  const [refresh, setRefresh] = useState(0)
+
+  useEffect(() => {
+    if (view !== 'flow' || step !== 1 || !availKey) return
+    let on = true
+    const today = dateKey(new Date())
+    const ranges = []
+    for (let from = 0; from <= maxDays; from += MAX_RANGE) ranges.push([addDays(today, from), addDays(today, Math.min(from + MAX_RANGE - 1, maxDays))])
+    setDays((d) => ({ ...d, key: availKey, loading: true, error: null }))
+    Promise.all(ranges.map(([f, t]) => (reschedule ? getManageDays(token, f, t) : getDays(serviceIds, f, t, staffId))))
+      .then((res) => {
+        if (!on) return
+        const map = new Map()
+        for (const r of res) for (const d of r.days) map.set(d.date, d.state === 'available' || d.state === 'few' ? d.slots : 0)
+        setDays({ key: availKey, map, loading: false, error: null })
+      })
+      .catch((e) => on && setDays({ key: availKey, map: new Map(), loading: false, error: e.message }))
+    return () => {
+      on = false
+    }
+  }, [view, step, availKey, maxDays, refresh])
+
+  const daysReady = days.key === availKey && !days.loading
+  const freeCount = (key) => (days.key === availKey ? days.map.get(key) ?? 0 : 0)
+  const slotKey = date && availKey ? `${availKey}|${date}` : null
+  const timesFor = (key) => (slots[`${availKey}|${key}`] ?? []).map((x) => x.min)
+
+  useEffect(() => {
+    if (view !== 'flow' || step !== 1 || !slotKey || slots[slotKey] || !daysReady || !freeCount(date)) return
+    let on = true
+    setSlotsLoading(true)
+    ;(reschedule ? getManageAvailability(token, date) : getAvailability(serviceIds, date, staffId))
+      .then((r) => on && setSlots((s) => ({ ...s, [slotKey]: r.slots.map((x) => ({ min: timeToMinutes(x.time), start: x.start })) })))
+      .catch((e) => on && setDays((d) => ({ ...d, error: e.message })))
+      .finally(() => on && setSlotsLoading(false))
+    return () => {
+      on = false
+    }
+  }, [view, step, slotKey, daysReady, refresh])
+
+  // Vuelve a pedir las horas (al volver a la agenda, o si una hora se ha ocupado mientras tanto).
+  const reloadAvailability = () => {
+    setSlots({})
+    setRefresh((n) => n + 1)
   }
-  const freeCount = (key) => timesFor(key).length
+  const startIso = date && start !== null ? slots[slotKey]?.find((x) => x.min === start)?.start ?? null : null
+
+  // ---------- La cita guardada: enlace del email (#cita=…) o el que se guardó al reservar ----------
+  useEffect(() => {
+    const fromUrl = takeTokenFromUrl()
+    const t = fromUrl ?? savedToken()
+    if (!t) return
+    if (fromUrl) rememberToken(fromUrl)
+    let on = true
+    getManaged(t)
+      .then((b) => {
+        if (!on) return
+        setToken(t)
+        setBooking(fromApi(b))
+        if (fromUrl) {
+          setView('manage')
+          requestAnimationFrame(() => sectionRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' }))
+        }
+      })
+      .catch((e) => {
+        // Enlace que ya no vale: se olvida. Uno que no existe llega sin cabeceras CORS (la API no dice de qué
+        // negocio sería) y el navegador lo ve como fallo de red; si hay conexión, también se olvida.
+        if (e.status === 404 || (e.status === 0 && navigator.onLine)) forgetToken()
+      })
+    return () => {
+      on = false
+    }
+  }, [])
 
   // Entrada desde el carrusel o la carta: preselecciona y abre el paso 1.
   useEffect(() => {
     if (!prefill) return
     setView('flow')
-    setReschedule(null)
+    setReschedule(false)
     setStep(0)
     setSelected((sel) => {
       let next = [...sel]
       if (prefill.serviceId && !next.includes(prefill.serviceId)) next.push(prefill.serviceId)
       if (prefill.extraId && prefill.extraId !== 'ninguno' && !next.includes(prefill.extraId)) next.push(prefill.extraId)
-      if (next.some((id) => BY_ID[id]?.extra) && !next.some((id) => !BY_ID[id]?.extra)) next = ['semi', ...next]
+      if (next.some((id) => byId[id]?.extra) && !next.some((id) => byId[id] && !byId[id].extra)) next = ['semi', ...next]
       return next
     })
     if (prefill.note) setForm((f) => ({ ...f, note: prefill.note }))
@@ -653,7 +840,7 @@ export default function Booking({ prefill }) {
   // Al entrar al calendario: primer día con hueco, y su mes.
   const pickFirstDay = () => {
     const today = new Date()
-    for (let i = 0; i <= SCHEDULE.daysAhead; i++) {
+    for (let i = 0; i <= maxDays; i++) {
       const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i)
       const key = dateKey(d)
       if (freeCount(key) > 0) {
@@ -665,25 +852,34 @@ export default function Booking({ prefill }) {
     setDate(null)
   }
   useEffect(() => {
-    if (view === 'flow' && step === 1 && (!date || !freeCount(date))) pickFirstDay()
-    if (date && start !== null && !timesFor(date).includes(start)) setStart(null)
-  }, [step, view, minutes, reschedule])
+    if (view === 'flow' && step === 1 && daysReady && (!date || !freeCount(date))) pickFirstDay()
+  }, [step, view, daysReady, availKey])
+  useEffect(() => {
+    if (date && start !== null && slots[slotKey] && !timesFor(date).includes(start)) setStart(null)
+  }, [slots, slotKey])
+
+  // Datos: un intento de reserva por visita al formulario (si se pulsa dos veces, se crea una sola cita).
+  useEffect(() => {
+    if (step === 2) idempotency.current = newKey()
+  }, [step])
 
   const toggle = (id) => {
     setErrors({})
     setSelected((sel) => {
       const next = sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]
       // sin servicio principal, los extras no tienen sentido solos
-      return next.some((x) => !BY_ID[x].extra) ? next : []
+      return next.some((x) => byId[x] && !byId[x].extra) ? next : []
     })
   }
 
-  function submit() {
+  async function submit() {
+    if (sending) return
     const e = {}
     if (form.name.trim().split(/\s+/).length < 2) e.name = 'Escribe tu nombre y apellido.'
     if (form.phone.replace(/\D/g, '').length < 6) e.phone = 'Escribe un teléfono válido.'
     if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) e.email = 'Escribe un email válido.'
     if (!form.privacy) e.privacy = 'Necesitas aceptar la política de privacidad para reservar.'
+    if (catalog.siteKey && !captcha && !Object.keys(e).length) e.captcha = 'Espera a que se marque la comprobación de seguridad.'
     setErrors(e)
     if (Object.keys(e).length) {
       // lleva el cursor al primer campo con error (o a la casilla de privacidad)
@@ -694,31 +890,64 @@ export default function Booking({ prefill }) {
       })
       return
     }
-    const b = {
-      id: newId(),
-      status: 'confirmed',
-      date,
-      start,
-      minutes,
-      price,
-      services: items.map((s) => s.name),
-      name: form.name.trim(),
-      phone: `${form.cc} ${form.phone.trim()}`,
-      email: form.email.trim(),
-      note: form.note.trim(),
-      promo: form.promo,
-      createdAt: Date.now(),
+    setSending(true)
+    try {
+      const res = await createBooking({
+        services: serviceIds,
+        staff_id: staffId ?? null,
+        start: startIso,
+        customer: { name: form.name.trim(), phone: `${form.cc} ${form.phone.trim()}`, email: form.email.trim(), note: form.note.trim() || undefined },
+        consents: { privacy: true, marketing: form.promo, version: RESERVAS.consentimientos },
+        idempotency_key: idempotency.current,
+        turnstile_token: captcha ?? '',
+        website: form.website,
+      })
+      if (res.manage_token) {
+        rememberToken(res.manage_token)
+        setToken(res.manage_token)
+      }
+      setBooking({ ...fromApi(res.booking), phone: `${form.cc} ${form.phone.trim()}`, note: form.note.trim() })
+      setSlots({})
+      setView('done')
+    } catch (err) {
+      setCaptchaKey((n) => n + 1) // cada comprobación vale una vez
+      if (err.code === 'slot_not_available') {
+        setNotice(err.message)
+        setStart(null)
+        reloadAvailability()
+        setStep(1)
+        return
+      }
+      const f = err.fields ?? {}
+      const next = {}
+      if (f['customer.name']) next.name = f['customer.name']
+      if (f['customer.phone'] || err.code === 'invalid_phone') next.phone = f['customer.phone'] ?? err.message
+      if (f['customer.email']) next.email = f['customer.email']
+      if (err.code === 'privacy_consent_required') next.privacy = err.message
+      if (!Object.keys(next).length) next.form = err.message
+      setErrors(next)
+    } finally {
+      setSending(false)
     }
-    setBookings(saveBooking(b))
-    rememberCurrent(b.id)
-    setCurrentBooking(b.id)
-    setView('done')
   }
 
-  function confirmReschedule() {
-    setBookings(updateBooking(reschedule, { date, start, changedAt: Date.now() }))
-    setReschedule(null)
-    setView('manage')
+  async function confirmReschedule() {
+    if (sending || !startIso) return
+    setSending(true)
+    try {
+      setBooking(fromApi(await rescheduleBooking(token, startIso)))
+      setReschedule(false)
+      setNotice(null)
+      setView('manage')
+    } catch (err) {
+      if (err.code === 'slot_not_available') {
+        setStart(null)
+        reloadAvailability()
+      }
+      setNotice(err.message)
+    } finally {
+      setSending(false)
+    }
   }
 
   function startOver() {
@@ -727,13 +956,14 @@ export default function Booking({ prefill }) {
     setStart(null)
     setForm(EMPTY_FORM)
     setErrors({})
-    setReschedule(null)
+    setNotice(null)
+    setReschedule(false)
     setStep(0)
     setView('flow')
   }
 
-  const upcoming = booking && booking.status === 'confirmed' && startsAt(booking) > new Date() ? booking : null
-  const stepKey = `${view}-${step}-${reschedule ?? ''}`
+  const upcoming = booking && (booking.status === 'confirmed' || booking.status === 'pending') && booking.startsAt > new Date() ? booking : null
+  const stepKey = `${view}-${step}-${reschedule ? 'r' : ''}`
   const slide = reduce
     ? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } }
     : {
@@ -749,27 +979,27 @@ export default function Booking({ prefill }) {
         title={selected.length ? `${plural(items.length, 'servicio', 'servicios')} · ${formatMinutes(minutes)}` : 'Elige al menos un servicio'}
         sub={selected.length ? formatPrice(price) : 'Los extras se suman a un servicio.'}
         action="Continuar"
-        actionProps={{ type: 'button', disabled: !hasMain, onClick: () => setStep(1) }}
+        actionProps={{ type: 'button', disabled: !hasMain || !catalog.live, onClick: () => setStep(1) }}
       />
     )
   } else if (view === 'flow' && step === 1) {
     bar = (
       <BottomBar
-        note={`Puedes cambiar o cancelar hasta ${SCHEDULE.changeHours} horas antes.`}
+        note={`Puedes cambiar o cancelar hasta ${reschedule ? booking.cutoffHours : cutoffHours} horas antes.`}
         title={date && start !== null ? `${formatShortDate(date)} · ${minutesToTime(start)}` : 'Elige día y hora'}
         sub={reschedule ? formatMinutes(minutes) : `${formatMinutes(minutes)} · ${formatPrice(price)}`}
-        action={reschedule ? 'Confirmar cambio' : 'Continuar'}
-        actionProps={{ type: 'button', disabled: !date || start === null, onClick: reschedule ? confirmReschedule : () => setStep(2) }}
+        action={reschedule ? (sending ? 'Cambiando…' : 'Confirmar cambio') : 'Continuar'}
+        actionProps={{ type: 'button', disabled: !date || start === null || !startIso || sending, 'aria-busy': sending || undefined, onClick: reschedule ? confirmReschedule : () => { setNotice(null); setStep(2) } }}
       />
     )
   } else if (view === 'flow' && step === 2) {
     bar = (
       <BottomBar
-        note={`Puedes cambiar o cancelar hasta ${SCHEDULE.changeHours} horas antes.`}
+        note={`Puedes cambiar o cancelar hasta ${cutoffHours} horas antes.`}
         title={`${formatShortDate(date)} · ${minutesToTime(start)}`}
         sub={`${formatMinutes(minutes)} · ${formatPrice(price)}`}
-        action="Reservar"
-        actionProps={{ type: 'button', onClick: submit }}
+        action={sending ? 'Reservando…' : 'Reservar'}
+        actionProps={{ type: 'button', disabled: sending, 'aria-busy': sending || undefined, onClick: submit }}
       />
     )
   }
@@ -803,7 +1033,7 @@ export default function Booking({ prefill }) {
             {reschedule ? (
               <div className="flex items-center justify-between gap-4">
                 <p className="text-cream/80">Cambiando tu cita del {formatShortDate(booking.date)} a las {minutesToTime(booking.start)}</p>
-                <button type="button" className="link text-rg min-h-11" onClick={() => { setReschedule(null); setView('manage') }}>
+                <button type="button" className="link text-rg min-h-11" onClick={() => { setReschedule(false); setNotice(null); setView('manage') }}>
                   Volver
                 </button>
               </div>
@@ -816,7 +1046,9 @@ export default function Booking({ prefill }) {
         <div className="mt-8">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={stepKey} {...slide} transition={{ duration: 0.35, ease: EASE }}>
-              {view === 'flow' && step === 0 && <ServicesStep selected={selected} toggle={toggle} />}
+              {view === 'flow' && step === 0 && (
+                <ServicesStep groups={groups} byId={byId} selected={selected} toggle={toggle} error={catalog.error && !catalog.live ? catalog.error.message : null} />
+              )}
               {view === 'flow' && step === 1 && (
                 <DayStep
                   items={items}
@@ -831,18 +1063,36 @@ export default function Booking({ prefill }) {
                   timesFor={timesFor}
                   onChangeServices={() => setStep(0)}
                   reduce={reduce}
-                  rescheduling={!!reschedule}
+                  rescheduling={reschedule}
+                  maxDays={maxDays}
+                  loading={!daysReady || slotsLoading}
+                  error={days.error}
+                  notice={notice}
                 />
               )}
               {view === 'flow' && step === 2 && (
-                <DataStep items={items} minutes={minutes} date={date} start={start} form={form} setForm={setForm} errors={errors} onChangeServices={() => setStep(0)} />
+                <DataStep
+                  items={items}
+                  minutes={minutes}
+                  date={date}
+                  start={start}
+                  form={form}
+                  setForm={setForm}
+                  errors={errors}
+                  onChangeServices={() => setStep(0)}
+                  siteKey={catalog.siteKey}
+                  onCaptcha={setCaptcha}
+                  captchaKey={captchaKey}
+                />
               )}
               {view === 'done' && booking && <Done booking={booking} onManage={() => setView('manage')} reduce={reduce} />}
               {view === 'manage' && booking && (
                 <Manage
                   booking={booking}
                   onReschedule={() => {
-                    setReschedule(booking.id)
+                    setReschedule(true)
+                    setSlots({})
+                    setNotice(null)
                     setDate(booking.date)
                     setStart(null)
                     setMonth(new Date(parseKey(booking.date).getFullYear(), parseKey(booking.date).getMonth(), 1))
@@ -866,8 +1116,8 @@ export default function Booking({ prefill }) {
               booking={booking}
               reduce={reduce}
               onClose={() => setCancelOpen(false)}
-              onConfirm={(reason) => {
-                setBookings(updateBooking(booking.id, { status: 'cancelled', cancelReason: reason, cancelledAt: Date.now() }))
+              onConfirm={async (reason) => {
+                setBooking(fromApi(await cancelBooking(token, reason)))
                 setCancelOpen(false)
                 sectionRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
               }}

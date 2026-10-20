@@ -10,14 +10,15 @@ export const BUSINESS = {
   whatsapp: '',
 }
 
-// Horario de la demo: lunes a sábado, de 10:00 a 20:00, turnos cada 15 minutos.
-export const SCHEDULE = {
-  open: 10 * 60,
-  close: 20 * 60,
-  step: 15,
-  closedWeekdays: [0], // 0 = domingo
-  daysAhead: 60, // hasta cuántos días hacia delante se puede reservar
-  changeHours: 24, // hasta cuántas horas antes se puede cambiar o cancelar
+// Sistema de reservas (Reservas Konverso). La carta, los precios, el horario, los plazos y las citas se
+// gestionan en su panel; esta web los lee de la API. En local se puede apuntar a otro servidor con
+// VITE_RESERVAS_API y a otro negocio con VITE_RESERVAS_NEGOCIO en un archivo .env.local (por ejemplo,
+// http://localhost:3030 y el negocio de pruebas test-web-yuye).
+export const RESERVAS = {
+  api: import.meta.env.VITE_RESERVAS_API || 'https://appreservaskonverso.vercel.app',
+  negocio: import.meta.env.VITE_RESERVAS_NEGOCIO || 'yuye-nails',
+  // Versión del texto de las casillas de privacidad y promociones que ve la clienta. Si cambian, sube el número.
+  consentimientos: 'web-yuye-nails-v1',
 }
 
 export function whatsappLink(text) {

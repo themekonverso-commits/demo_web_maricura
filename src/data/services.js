@@ -1,4 +1,6 @@
-// Carta de servicios. Precios de referencia de salones de Sevilla (octubre 2026); confirmar con Andreina.
+// Carta de servicios de partida. La carta de verdad (precios, duraciones) está en el panel de reservas y la web
+// la lee de la API (src/lib/catalog.js); esta solo se ve mientras carga o si la API no responde.
+// Con ella se dio de alta el negocio (precios de referencia de Sevilla, octubre 2026; confirmar con Andreina).
 export const SERVICE_GROUPS = [
   {
     id: 'manos',
@@ -48,7 +50,7 @@ export const ALL_SERVICES = SERVICE_GROUPS.flatMap((g) => g.items.map((s) => ({ 
 export const findService = (id) => ALL_SERVICES.find((s) => s.id === id)
 export const findExtra = (id) => EXTRAS.find((e) => e.id === id) ?? EXTRAS[0]
 
-export const formatPrice = (n) => `${n} €`
+export const formatPrice = (n) => `${Number.isInteger(n) ? n : n.toFixed(2).replace('.', ',')} €`
 export function formatMinutes(min) {
   const h = Math.floor(min / 60)
   const m = min % 60

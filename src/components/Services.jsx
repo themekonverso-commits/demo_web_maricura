@@ -1,4 +1,5 @@
-import { EXTRAS, REMOVAL, SERVICE_GROUPS, formatMinutes, formatPrice } from '../data/services'
+import { formatMinutes, formatPrice } from '../data/services'
+import { useCatalog } from '../lib/catalog'
 import { Item, Stagger } from './Reveal'
 
 // ---------- Íconos de línea en oro rosa (se dibujan con el color del texto) ----------
@@ -143,6 +144,7 @@ function MenuCard({ icon, title, from, children }) {
 // La carta, al estilo del póster de referencia: los servicios como un menú de lujo en oro rosa
 // sobre el fondo oscuro con nieve.
 export default function Services({ onPickService, onPickExtra }) {
+  const catalog = useCatalog()
   return (
     <section id="carta" className="relative z-10 overflow-hidden text-cream pt-[calc(var(--section-y)/2)] pb-[var(--section-y)]">
       <div className="relative wrap">
@@ -159,7 +161,7 @@ export default function Services({ onPickService, onPickExtra }) {
         </Stagger>
 
         <div className="mt-8 md:mt-12 columns-1 md:columns-2 gap-6 md:gap-8 [&>*]:break-inside-avoid [&>*]:mb-6 md:[&>*]:mb-8">
-          {SERVICE_GROUPS.map((g) => (
+          {catalog.groups.map((g) => (
             <MenuCard key={g.id} icon={GROUP_ICON[g.id]} title={g.name} from={`Desde ${formatPrice(Math.min(...g.items.map((s) => s.price)))}`}>
               {g.items.map((s) => (
                 <Row key={s.id} {...s} onClick={() => onPickService(s.id)} />
@@ -167,12 +169,14 @@ export default function Services({ onPickService, onPickExtra }) {
             </MenuCard>
           ))}
           <MenuCard icon="brush" title="Nail art" from="Se suma a cualquier servicio">
-            {EXTRAS.filter((e) => e.id !== 'ninguno').map((e) => (
+            {catalog.decor.map((e) => (
               <Row key={e.id} {...e} plus onClick={() => onPickExtra(e.id)} />
             ))}
-            <Item as="li" className="mt-4 text-small text-cream/70">
-              ¿Vienes con trabajo de otro salón? La retirada suma {formatPrice(REMOVAL.price)} y {REMOVAL.minutes} minutos.
-            </Item>
+            {catalog.removal && (
+              <Item as="li" className="mt-4 text-small text-cream/70">
+                ¿Vienes con trabajo de otro salón? La retirada suma {formatPrice(catalog.removal.price)} y {catalog.removal.minutes} minutos.
+              </Item>
+            )}
           </MenuCard>
         </div>
 

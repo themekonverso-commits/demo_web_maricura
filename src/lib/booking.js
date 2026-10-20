@@ -1,8 +1,7 @@
-import { SCHEDULE } from '../config'
+// Fechas, horas y la cita de esta clienta. Las citas viven en el sistema de reservas (src/lib/api.js);
+// en este navegador solo se guarda el enlace privado de la última cita, para poder enseñarla al volver.
 
-const STORAGE_KEY = 'yuye-reservas-demo'
-const CURRENT_KEY = 'yuye-cita-actual'
-const SLOTS_PER_DAY = (SCHEDULE.close - SCHEDULE.open) / SCHEDULE.step
+const TOKEN_KEY = 'yuye-cita-enlace'
 
 const pad = (n) => String(n).padStart(2, '0') // taste-skill-ignore: ceros de reloj y fecha
 
@@ -13,7 +12,17 @@ export function parseKey(key) {
   return new Date(y, m - 1, d)
 }
 
+export const addDays = (key, n) => {
+  const d = parseKey(key)
+  d.setDate(d.getDate() + n)
+  return dateKey(d)
+}
+
 export const minutesToTime = (min) => `${pad(Math.floor(min / 60))}:${pad(min % 60)}`
+export const timeToMinutes = (t) => {
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1)
 const longDate = new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -23,116 +32,61 @@ export const formatLongDate = (key) => cap(longDate.format(parseKey(key)))
 // «Mié 28 oct»
 export const formatShortDate = (key) => cap(shortDate.format(parseKey(key)).replace(/[.,]/g, ''))
 
-// Fecha y hora real de inicio de una cita.
-export const startsAt = (b) => {
-  const d = parseKey(b.date)
-  d.setMinutes(b.start)
-  return d
+// La cita como la pinta la web, a partir de la que devuelve la API (fecha y hora en la hora del negocio).
+export function fromApi(b) {
+  const start = timeToMinutes(b.time)
+  return {
+    id: b.id,
+    code: b.id.slice(0, 8).toUpperCase(),
+    status: b.status,
+    date: b.date,
+    start,
+    minutes: timeToMinutes(b.end_time) - start,
+    price: b.total_price_cents / 100,
+    services: b.services.map((s) => s.name),
+    name: b.customer_name,
+    startsAt: new Date(b.start),
+    canChange: Boolean(b.can_change),
+    deadline: b.change_deadline ? new Date(b.change_deadline) : null,
+    cutoffHours: b.cancel_cutoff_hours,
+  }
 }
 
-// Generador pseudoaleatorio con semilla: el mismo día siempre muestra las mismas horas ocupadas.
-function seeded(str) {
-  let h = 1779033703 ^ str.length
-  for (let i = 0; i < str.length; i++) {
-    h = Math.imul(h ^ str.charCodeAt(i), 3432918353)
-    h = (h << 13) | (h >>> 19)
-  }
-  return () => {
-    h = Math.imul(h ^ (h >>> 16), 2246822507)
-    h = Math.imul(h ^ (h >>> 13), 3266489909)
-    return ((h ^= h >>> 16) >>> 0) / 4294967296
-  }
-}
+// ---------- El enlace privado de la cita (token) ----------
+// Llega en la respuesta al reservar o en el enlace del email (…/#cita=TOKEN). Da acceso a la cita:
+// solo se guarda en este navegador y se quita de la barra de direcciones en cuanto se lee.
 
-// ---------- Citas guardadas en este navegador (la demo no tiene servidor) ----------
-
-export function loadBookings() {
+export function rememberToken(token) {
   try {
-    return (JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? []).filter((b) => b && b.id)
+    localStorage.setItem(TOKEN_KEY, token)
   } catch {
-    return []
+    // Sin almacenamiento (modo privado): la cita se ve solo en esta visita; el enlace del email sigue valiendo.
   }
 }
 
-function persist(all) {
+export function savedToken() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all))
-  } catch {
-    // Sin almacenamiento (modo privado): la reserva vale solo para esta visita.
-  }
-  return all
-}
-
-export const newId = () => `YN-${Date.now().toString(36).toUpperCase()}`
-
-export const saveBooking = (booking) => persist([...loadBookings(), booking])
-
-export const updateBooking = (id, patch) => persist(loadBookings().map((b) => (b.id === id ? { ...b, ...patch } : b)))
-
-export function rememberCurrent(id) {
-  try {
-    localStorage.setItem(CURRENT_KEY, id)
-  } catch {
-    // sin almacenamiento
-  }
-}
-
-export function currentId() {
-  try {
-    return localStorage.getItem(CURRENT_KEY)
+    return localStorage.getItem(TOKEN_KEY)
   } catch {
     return null
   }
 }
 
-// ---------- Agenda ----------
-
-// Citas de ejemplo para que la agenda se vea real, más las confirmadas en este navegador.
-// `excludeId` deja fuera la cita que se está cambiando, para que su propia hora cuente como libre.
-export function busySlots(key, bookings, excludeId) {
-  const busy = new Array(SLOTS_PER_DAY).fill(false)
-  const rand = seeded(key)
-  const isSaturday = parseKey(key).getDay() === 6
-  const blocks = 2 + Math.floor(rand() * (isSaturday ? 5 : 4))
-  for (let b = 0; b < blocks; b++) {
-    const start = Math.floor(rand() * SLOTS_PER_DAY)
-    const length = 2 + Math.floor(rand() * 8)
-    for (let i = start; i < Math.min(start + length, SLOTS_PER_DAY); i++) busy[i] = true
+export function forgetToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // sin almacenamiento
   }
-  for (const bk of bookings) {
-    if (bk.date !== key || bk.status === 'cancelled' || bk.id === excludeId) continue
-    const start = (bk.start - SCHEDULE.open) / SCHEDULE.step
-    const length = Math.ceil(bk.minutes / SCHEDULE.step)
-    for (let i = start; i < Math.min(start + length, SLOTS_PER_DAY); i++) busy[i] = true
-  }
-  return busy
 }
 
-// Horas de inicio en las que caben todos los servicios sin pisar otra cita ni pasar del cierre.
-export function availableTimes(key, minutes, bookings, now = new Date(), excludeId) {
-  const day = parseKey(key)
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const last = new Date(today)
-  last.setDate(last.getDate() + SCHEDULE.daysAhead)
-  if (day < today || day > last || SCHEDULE.closedWeekdays.includes(day.getDay()) || minutes <= 0) return []
-
-  const busy = busySlots(key, bookings, excludeId)
-  const need = Math.ceil(minutes / SCHEDULE.step)
-  const isToday = key === dateKey(now)
-  const earliest = now.getHours() * 60 + now.getMinutes() + 60
-  const times = []
-  for (let s = 0; s + need <= SLOTS_PER_DAY; s++) {
-    const start = SCHEDULE.open + s * SCHEDULE.step
-    if (isToday && start < earliest) continue
-    if (busy.slice(s, s + need).some(Boolean)) continue
-    times.push(start)
-  }
-  return times
-}
-
-// ¿Se puede todavía cambiar o cancelar online? Hasta `changeHours` antes de la cita.
-export function changeDeadline(b) {
-  const d = startsAt(b)
-  d.setHours(d.getHours() - SCHEDULE.changeHours)
-  return d
+// Lee el token del enlace del email (#cita=…) y lo quita de la dirección (para que no se comparta al copiarla).
+// Una vez por carga de la página: se guarda aquí para que leerlo dos veces (modo estricto de React) dé lo mismo.
+let fromUrl
+export function takeTokenFromUrl() {
+  if (fromUrl !== undefined) return fromUrl
+  const m = window.location.hash.match(/^#cita=([A-Za-z0-9_-]{20,})$/)
+  fromUrl = m ? m[1] : null
+  if (m) history.replaceState(null, '', `${window.location.pathname}${window.location.search}#reserva`)
+  return fromUrl
 }

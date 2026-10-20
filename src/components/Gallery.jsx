@@ -2,11 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useSpring, useTransform } from 'framer-motion'
 import { GALLERY } from '../data/gallery'
 import { findExtra, findService, formatMinutes, formatPrice } from '../data/services'
+import { findIn, useCatalog } from '../lib/catalog'
 import { Item, Stagger } from './Reveal'
 
 const N = GALLERY.length
 const START = 0
-const BASE = findService('semi')
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 
 // Interpola en una tabla por posición (0 = centro, 1 = primera de al lado, ...).
@@ -52,7 +52,10 @@ function useStageSize(ref) {
 
 function Card({ g, i, progress, dragTilt, W, mobile, flipped, onSelect, onWant, reduce }) {
   const L = mobile ? LAYOUT.mobile : LAYOUT.desktop
-  const extra = findExtra(g.extra)
+  // Precio y duración de la carta viva (panel de reservas); si aún no ha llegado, los de la carta de partida.
+  const catalog = useCatalog()
+  const BASE = findIn(catalog, 'semi') ?? findService('semi')
+  const extra = findIn(catalog, g.extra) ?? findExtra(g.extra)
   const H = W * (mobile ? 1.62 : 1.5)
 
   const transform = useTransform(progress, (p) => {
