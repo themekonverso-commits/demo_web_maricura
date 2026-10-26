@@ -430,7 +430,12 @@ function Field({ label, optional, error, hint, children }) {
   )
 }
 
-function DataStep({ items, minutes, date, start, form, setForm, errors, onChangeServices, siteKey, onCaptcha, captchaKey }) {
+// Texto de la casilla (el de referencia de la guía de la API). Si cambia, sube RESERVAS.consentimientosWhatsapp.
+const TEXTO_WHATSAPP = 'Quiero recibir por WhatsApp la confirmación, los recordatorios y los cambios de mi cita. Opcional. Para dejar de recibirlos, responde BAJA.'
+
+function DataStep({ items, minutes, date, start, form, setForm, errors, onChangeServices, siteKey, onCaptcha, captchaKey, whatsappOn }) {
+  // El email solo deja de ser obligatorio si la clienta pide los avisos por WhatsApp (y el negocio los tiene activos).
+  const emailOptional = whatsappOn && form.whatsapp
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }))
   return (
     <div>
@@ -456,7 +461,12 @@ function DataStep({ items, minutes, date, start, form, setForm, errors, onChange
           </span>
         </Field>
         <div className="md:col-span-2">
-          <Field label="Email" error={errors.email}>
+          <Field
+            label="Email"
+            optional={emailOptional}
+            error={errors.email}
+            hint={emailOptional ? 'Los avisos te llegarán por WhatsApp. Si añades tu email, lo usamos de respaldo por si WhatsApp fallara.' : undefined}
+          >
             <input className="field" type="email" inputMode="email" value={form.email} onChange={set('email')} autoComplete="email" aria-invalid={!!errors.email} />
           </Field>
         </div>
@@ -481,6 +491,13 @@ function DataStep({ items, minutes, date, start, form, setForm, errors, onChange
             <span className="text-cream/60">Opcional; puedes darte de baja cuando quieras.</span>
           </span>
         </label>
+        {whatsappOn && (
+          <label className="md:col-span-2 flex items-start gap-3 cursor-pointer min-h-11">
+            <input type="checkbox" className="sr-only" checked={form.whatsapp} onChange={set('whatsapp')} />
+            <span className="pt-0.5"><Checkbox checked={form.whatsapp} /></span>
+            <span>{TEXTO_WHATSAPP}</span>
+          </label>
+        )}
         {siteKey && (
           <div className="md:col-span-2">
             <Turnstile siteKey={siteKey} onToken={onCaptcha} resetKey={captchaKey} />
@@ -692,13 +709,15 @@ function Manage({ booking, onReschedule, onCancel, onNew }) {
 
 // ---------- Sección completa ----------
 
-const EMPTY_FORM = { name: '', cc: '+34', phone: '', email: '', note: '', privacy: false, promo: false, website: '' }
+const EMPTY_FORM = { name: '', cc: '+34', phone: '', email: '', note: '', privacy: false, promo: false, whatsapp: false, website: '' }
 
 export default function Booking({ prefill }) {
   const reduce = useReducedMotion()
   const sectionRef = useRef(null)
   const lastStep = useRef(null)
   const catalog = useCatalog()
+  // La casilla de WhatsApp solo se enseña si el negocio tiene los avisos activos (settings.whatsapp de /config).
+  const whatsappOn = catalog.settings?.whatsapp === true
   const { groups, byId } = useMemo(() => bookingCatalog(catalog), [catalog.groups, catalog.extraItems])
   const maxDays = catalog.settings?.max_advance_days ?? 60
   const cutoffHours = catalog.settings?.cancel_cutoff_hours ?? 24
@@ -877,7 +896,10 @@ export default function Booking({ prefill }) {
     const e = {}
     if (form.name.trim().split(/\s+/).length < 2) e.name = 'Escribe tu nombre y apellido.'
     if (form.phone.replace(/\D/g, '').length < 6) e.phone = 'Escribe un teléfono válido.'
-    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) e.email = 'Escribe un email válido.'
+    // Sin WhatsApp el email es obligatorio; con WhatsApp se puede dejar vacío, pero si se escribe tiene que ser válido.
+    const wa = whatsappOn && form.whatsapp
+    const email = form.email.trim()
+    if (email ? !/^\S+@\S+\.\S+$/.test(email) : !wa) e.email = email ? 'Escribe un email válido.' : 'Escribe tu email, o marca los avisos por WhatsApp.'
     if (!form.privacy) e.privacy = 'Necesitas aceptar la política de privacidad para reservar.'
     if (catalog.siteKey && !captcha && !Object.keys(e).length) e.captcha = 'Espera a que se marque la comprobación de seguridad.'
     setErrors(e)
@@ -896,8 +918,13 @@ export default function Booking({ prefill }) {
         services: serviceIds,
         staff_id: staffId ?? null,
         start: startIso,
-        customer: { name: form.name.trim(), phone: `${form.cc} ${form.phone.trim()}`, email: form.email.trim(), note: form.note.trim() || undefined },
-        consents: { privacy: true, marketing: form.promo, version: RESERVAS.consentimientos },
+        customer: { name: form.name.trim(), phone: `${form.cc} ${form.phone.trim()}`, email: form.email.trim() || undefined, note: form.note.trim() || undefined },
+        consents: {
+          privacy: true,
+          marketing: form.promo,
+          version: RESERVAS.consentimientos,
+          ...(wa ? { whatsapp: true, whatsapp_version: RESERVAS.consentimientosWhatsapp } : {}),
+        },
         idempotency_key: idempotency.current,
         turnstile_token: captcha ?? '',
         website: form.website,
@@ -1083,6 +1110,7 @@ export default function Booking({ prefill }) {
                   siteKey={catalog.siteKey}
                   onCaptcha={setCaptcha}
                   captchaKey={captchaKey}
+                  whatsappOn={whatsappOn}
                 />
               )}
               {view === 'done' && booking && <Done booking={booking} onManage={() => setView('manage')} reduce={reduce} />}

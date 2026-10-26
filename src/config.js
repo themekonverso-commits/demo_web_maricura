@@ -19,6 +19,8 @@ export const RESERVAS = {
   negocio: import.meta.env.VITE_RESERVAS_NEGOCIO || 'yuye-nails',
   // Versión del texto de las casillas de privacidad y promociones que ve la clienta. Si cambian, sube el número.
   consentimientos: 'web-yuye-nails-v1',
+  // Versión del texto de la casilla de avisos por WhatsApp (Booking.jsx, TEXTO_WHATSAPP). Si el texto cambia, sube el número.
+  consentimientosWhatsapp: 'web-yuye-nails-whatsapp-v1',
 }
 
 export function whatsappLink(text) {
